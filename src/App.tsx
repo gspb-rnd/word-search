@@ -1,4 +1,4 @@
-import { useState, KeyboardEvent } from 'react'
+import { useState, KeyboardEvent, useEffect, useRef } from 'react'
 import { Search, Volume2, ExternalLink } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { fetchWordData, WordData } from './services/dictionaryService'
+import { fetchWordData, fetchWordSuggestions, WordData, WordSuggestion } from './services/dictionaryService'
 import './App.css'
 
 function App() {
@@ -15,12 +15,57 @@ function App() {
   const [wordData, setWordData] = useState<WordData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeAudio, setActiveAudio] = useState<HTMLAudioElement | null>(null)
+  const [suggestions, setSuggestions] = useState<WordSuggestion[]>([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1)
+  const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false)
+  
+  const suggestionsRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  
+  useEffect(() => {
+    const fetchSuggestions = async () => {
+      if (!searchTerm.trim() || searchTerm.length < 2) {
+        setSuggestions([])
+        return
+      }
+      
+      setIsFetchingSuggestions(true)
+      try {
+        const data = await fetchWordSuggestions(searchTerm.trim())
+        setSuggestions(data)
+      } catch (error) {
+        console.error('Error fetching suggestions:', error)
+      } finally {
+        setIsFetchingSuggestions(false)
+      }
+    }
+    
+    const debounceTimer = setTimeout(() => {
+      fetchSuggestions()
+    }, 300)
+    
+    return () => clearTimeout(debounceTimer)
+  }, [searchTerm])
+  
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(event.target as Node) && 
+          inputRef.current && !inputRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false)
+      }
+    }
+    
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   const handleSearch = async () => {
     if (!searchTerm.trim()) return
     
     setIsSearching(true)
     setError(null)
+    setShowSuggestions(false)
     
     try {
       const data = await fetchWordData(searchTerm.trim())
@@ -41,8 +86,41 @@ function App() {
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
-      handleSearch()
+      if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < suggestions.length) {
+        setSearchTerm(suggestions[selectedSuggestionIndex].word)
+        setShowSuggestions(false)
+        setSelectedSuggestionIndex(-1)
+        setTimeout(() => handleSearch(), 0)
+      } else {
+        handleSearch()
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      if (suggestions.length > 0) {
+        setShowSuggestions(true)
+        setSelectedSuggestionIndex(prev => 
+          prev < suggestions.length - 1 ? prev + 1 : 0
+        )
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (suggestions.length > 0) {
+        setShowSuggestions(true)
+        setSelectedSuggestionIndex(prev => 
+          prev > 0 ? prev - 1 : suggestions.length - 1
+        )
+      }
+    } else if (e.key === 'Escape') {
+      setShowSuggestions(false)
+      setSelectedSuggestionIndex(-1)
     }
+  }
+
+  const handleSuggestionClick = (suggestion: WordSuggestion) => {
+    setSearchTerm(suggestion.word)
+    setShowSuggestions(false)
+    setSelectedSuggestionIndex(-1)
+    setTimeout(() => handleSearch(), 0)
   }
 
   const playAudio = (audioUrl: string) => {
@@ -60,15 +138,53 @@ function App() {
       <div className="w-full max-w-3xl mx-auto">
         <h1 className="text-3xl font-bold text-center mb-8 text-slate-800">Word Search</h1>
         
-        <div className="flex gap-2 mb-8">
-          <Input
-            type="text"
-            placeholder="Enter a word..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="flex-1"
-          />
+        <div className="flex gap-2 mb-8 relative">
+          <div className="flex-1 relative">
+            <Input
+              ref={inputRef}
+              type="text"
+              placeholder="Enter a word..."
+              value={searchTerm}
+              onChange={(e) => {
+                setSearchTerm(e.target.value)
+                setShowSuggestions(true)
+                setSelectedSuggestionIndex(-1)
+              }}
+              onFocus={() => {
+                if (searchTerm.trim().length >= 2 && suggestions.length > 0) {
+                  setShowSuggestions(true)
+                }
+              }}
+              onKeyDown={handleKeyDown}
+              className="flex-1"
+            />
+            
+            {showSuggestions && suggestions.length > 0 && (
+              <div 
+                ref={suggestionsRef}
+                className="absolute z-10 w-full mt-1 bg-white rounded-md shadow-lg max-h-60 overflow-auto border border-slate-200"
+              >
+                {suggestions.map((suggestion, index) => (
+                  <div
+                    key={index}
+                    className={`px-4 py-2 cursor-pointer hover:bg-slate-100 ${
+                      index === selectedSuggestionIndex ? 'bg-slate-100' : ''
+                    }`}
+                    onClick={() => handleSuggestionClick(suggestion)}
+                  >
+                    {suggestion.word}
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {isFetchingSuggestions && (
+              <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                <div className="animate-spin h-4 w-4 border-2 border-slate-300 border-t-slate-600 rounded-full"></div>
+              </div>
+            )}
+          </div>
+          
           <Button 
             onClick={handleSearch} 
             disabled={isSearching || !searchTerm.trim()}

@@ -1,5 +1,6 @@
 
 const FREE_DICTIONARY_API_URL = 'https://api.dictionaryapi.dev/api/v2/entries/en';
+const DATAMUSE_API_URL = 'https://api.datamuse.com/sug';
 
 export interface Phonetic {
   text: string;
@@ -46,6 +47,11 @@ export interface WordData {
   sourceUrls: string[];
 }
 
+export interface WordSuggestion {
+  word: string;
+  score: number;
+}
+
 /**
  * Fetches word data from the Free Dictionary API
  * @param word The word to look up
@@ -78,5 +84,34 @@ export const fetchWordData = async (word: string): Promise<WordData | null> => {
   } catch (error) {
     console.error('Error fetching word data:', error);
     return null;
+  }
+};
+
+/**
+ * Fetches word suggestions for autocomplete
+ * @param query The partial word to get suggestions for
+ * @returns Promise with word suggestions
+ */
+export const fetchWordSuggestions = async (query: string): Promise<WordSuggestion[]> => {
+  if (!query.trim()) {
+    return [];
+  }
+  
+  try {
+    const response = await fetch(`${DATAMUSE_API_URL}?s=${encodeURIComponent(query.trim())}`);
+    
+    if (!response.ok) {
+      throw new Error(`Datamuse API error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    return data.map((item: any) => ({
+      word: item.word,
+      score: item.score
+    }));
+  } catch (error) {
+    console.error('Error fetching word suggestions:', error);
+    return [];
   }
 };
